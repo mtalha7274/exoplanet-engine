@@ -1,122 +1,165 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import GalaxyView from './components/GalaxyView.jsx'
+import SystemView from './components/SystemView.jsx'
+import PlanetPanel from './components/PlanetPanel.jsx'
+import FilterChips from './components/FilterChips.jsx'
+import { loadPlanets } from './lib/data.js'
+import { groupSystems } from './lib/pipeline.js'
+import { createSurveyClient } from './lib/surveyClient.js'
+import { FILTERS } from './lib/filters.js'
+import { systemStats } from './lib/format.js'
+import { filterPlanets, findSystem, pickRandom } from './lib/select.js'
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+function storage() {
+  try {
+    window.localStorage.getItem('survey:probe')
+    return window.localStorage
+  } catch {
+    return null
+  }
 }
 
-export default App
+export default function App() {
+  const [planets, setPlanets] = useState(null)
+  const [error, setError] = useState(null)
+  const [filter, setFilter] = useState(null)
+  const [host, setHost] = useState(null)
+  const [planet, setPlanet] = useState(null)
+  const [warpTarget, setWarpTarget] = useState(null)
+  const pendingPlanet = useRef(null)
+
+  const survey = useMemo(() => createSurveyClient({ storage: storage() }), [])
+
+  useEffect(() => {
+    loadPlanets().then(setPlanets).catch(err => setError(err.message))
+  }, [])
+
+  const systems = useMemo(() => (planets ? groupSystems(planets) : []), [planets])
+
+  const counts = useMemo(() => {
+    const out = {}
+    for (const f of FILTERS) out[f.id] = planets ? filterPlanets(planets, f.id).length : 0
+    return out
+  }, [planets])
+
+  const system = findSystem(systems, host)
+
+  function warpTo(nextHost) {
+    setHost(nextHost)
+    setWarpTarget(null)
+    const queued = pendingPlanet.current
+    if (queued) {
+      pendingPlanet.current = null
+      setPlanet(queued)
+    }
+  }
+
+  function randomWonder() {
+    if (!planets) return
+    const pool = filterPlanets(planets, filter)
+    const pick = pickRandom(pool)
+    if (!pick) return
+    const target = findSystem(systems, pick.host)
+    if (!target) return
+    setPlanet(null)
+    if (host === pick.host) {
+      setPlanet(pick)
+      return
+    }
+    pendingPlanet.current = pick
+    if (host) {
+      setHost(null)
+      setWarpTarget(target)
+    } else {
+      setWarpTarget(target)
+    }
+  }
+
+  function backToGalaxy() {
+    setHost(null)
+    setPlanet(null)
+    setWarpTarget(null)
+  }
+
+  if (error) {
+    return (
+      <div className="boot">
+        <h1>SIGNAL LOST</h1>
+        <p>{error}</p>
+        <p className="boot-hint">Run <code>npm run refresh-data</code> to rebuild the star chart.</p>
+      </div>
+    )
+  }
+
+  if (!planets) {
+    return (
+      <div className="boot">
+        <h1>EXOPLANET DISCOVERY ENGINE</h1>
+        <p className="boot-status">ACQUIRING STAR CHART…</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="app">
+      <div className="scanlines" />
+
+      {system ? (
+        <SystemView
+          system={system}
+          filter={filter}
+          selected={planet}
+          onSelectPlanet={setPlanet}
+        />
+      ) : (
+        <GalaxyView
+          systems={systems}
+          filter={filter}
+          onWarp={warpTo}
+          warpTarget={warpTarget}
+        />
+      )}
+
+      <header className="hud-top">
+        <div className="brand">
+          <h1>EXOPLANET DISCOVERY ENGINE</h1>
+          <p>Every light is a real star. Every world is real.</p>
+        </div>
+        <div className="readout">
+          <span>{planets.length.toLocaleString()} CONFIRMED WORLDS</span>
+          <span>{systems.length.toLocaleString()} HOST SYSTEMS</span>
+        </div>
+      </header>
+
+      {system && (
+        <div className="hud-system">
+          <div className="hud-system-head">
+            <button className="back" onClick={backToGalaxy}>← GALAXY</button>
+            <h2>{system.host}</h2>
+          </div>
+          <dl className="system-strip">
+            {systemStats(system).map(stat => (
+              <div key={stat.label}>
+                <dt>{stat.label}</dt>
+                <dd>{stat.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+
+      {planet && (
+        <PlanetPanel planet={planet} survey={survey} onClose={() => setPlanet(null)} />
+      )}
+
+      <footer className={planet ? 'hud-bottom shifted' : 'hud-bottom'}>
+        <FilterChips
+          active={filter}
+          counts={counts}
+          onChange={setFilter}
+          onRandom={randomWonder}
+        />
+      </footer>
+    </div>
+  )
+}
