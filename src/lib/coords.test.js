@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { compressDistance, raDecToXYZ, toPosition } from './coords.js'
+import { compressDistance, raDecToXYZ, toPosition, compressionScale } from './coords.js'
+
+describe('compressionScale', () => {
+  it('leaves near space untouched', () => {
+    expect(compressionScale(100)).toBe(1)
+    expect(compressionScale(500)).toBe(1)
+  })
+
+  it('shrinks far space toward the origin', () => {
+    expect(compressionScale(5000)).toBeLessThan(1)
+    expect(compressionScale(5000)).toBeGreaterThan(0)
+  })
+
+  it('matches the compressed distance when applied to a true distance', () => {
+    for (const d of [50, 500, 1200, 8500]) {
+      expect(d * compressionScale(d)).toBeCloseTo(compressDistance(d), 6)
+    }
+  })
+
+  it('is safe at zero distance', () => {
+    expect(compressionScale(0)).toBe(1)
+  })
+})
 
 describe('compressDistance', () => {
   it('leaves distances at or below the threshold unchanged', () => {

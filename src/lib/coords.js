@@ -15,6 +15,11 @@ export function raDecToXYZ(ra, dec, dist) {
   }
 }
 
+export function compressionScale(dist, threshold = 500) {
+  if (dist <= 0) return 1
+  return compressDistance(dist, threshold) / dist
+}
+
 export function toPosition(ra, dec, dist, threshold = 500) {
   return raDecToXYZ(ra, dec, compressDistance(dist, threshold))
 }

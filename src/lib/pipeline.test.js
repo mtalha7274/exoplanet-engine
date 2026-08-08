@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { cleanRows, deriveRow, buildSnapshot, groupSystems } from './pipeline.js'
-import { toPosition } from './coords.js'
+import { raDecToXYZ } from './coords.js'
 import { teffToColor } from './starColor.js'
 
 const raw = {
@@ -55,9 +55,9 @@ describe('deriveRow', () => {
     expect(p.discMethod).toBe('Transit')
   })
 
-  it('computes the compressed cartesian position', () => {
+  it('computes the true cartesian position in parsecs', () => {
     const p = deriveRow(raw)
-    const expected = toPosition(10, 20, 30)
+    const expected = raDecToXYZ(10, 20, 30)
     expect(p.x).toBeCloseTo(expected.x, 6)
     expect(p.y).toBeCloseTo(expected.y, 6)
     expect(p.z).toBeCloseTo(expected.z, 6)

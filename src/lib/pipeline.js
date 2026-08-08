@@ -1,4 +1,4 @@
-import { toPosition } from './coords.js'
+import { raDecToXYZ } from './coords.js'
 import { classifyPlanet } from './classify.js'
 import { teffToColor } from './starColor.js'
 
@@ -26,7 +26,7 @@ export function deriveRow(r) {
     discYear: r.disc_year ?? null,
     discMethod: r.discoverymethod ?? null
   }
-  const pos = toPosition(planet.ra, planet.dec, planet.dist)
+  const pos = raDecToXYZ(planet.ra, planet.dec, planet.dist)
   planet.x = pos.x
   planet.y = pos.y
   planet.z = pos.z

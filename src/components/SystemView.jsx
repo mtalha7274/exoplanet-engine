@@ -6,12 +6,36 @@ import { planetTextureCanvas } from '../lib/texture.js'
 import { matchesFilter } from '../lib/filters.js'
 import { hashString } from '../lib/seed.js'
 
-export default function SystemView({ system, filter, selected, onSelectPlanet }) {
+function starSpriteTexture(size = 64) {
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const c = size / 2
+  const grad = ctx.createRadialGradient(c, c, 0, c, c, c)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.3, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.42, 'rgba(255,255,255,0.55)')
+  grad.addColorStop(0.62, 'rgba(255,255,255,0.16)')
+  grad.addColorStop(0.84, 'rgba(255,255,255,0.03)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.generateMipmaps = false
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.LinearFilter
+  return texture
+}
+
+export default function SystemView({ system, filter, selected, onSelectPlanet, onSelectStar }) {
   const mountRef = useRef(null)
   const selectRef = useRef(onSelectPlanet)
+  const starRef = useRef(onSelectStar)
   const bodiesRef = useRef([])
 
   selectRef.current = onSelectPlanet
+  starRef.current = onSelectStar
 
   useEffect(() => {
     const mount = mountRef.current
@@ -32,6 +56,13 @@ export default function SystemView({ system, filter, selected, onSelectPlanet })
       new THREE.MeshBasicMaterial({ color: starColor })
     )
     scene.add(star)
+
+    const starHitGeo = new THREE.SphereGeometry(Math.max(starRadius * 1.25, 1.2), 16, 16)
+    const starHit = new THREE.Mesh(starHitGeo, new THREE.MeshBasicMaterial())
+    starHit.visible = false
+    starHit.userData.star = true
+    star.add(starHit)
+
     scene.add(new THREE.PointLight(starColor, 900, 0, 2))
     scene.add(new THREE.AmbientLight(0x223046, 1.1))
 
@@ -58,12 +89,13 @@ export default function SystemView({ system, filter, selected, onSelectPlanet })
     for (let i = 0; i < field.length; i++) field[i] = (Math.random() - 0.5) * 1200
     const fieldGeo = new THREE.BufferGeometry()
     fieldGeo.setAttribute('position', new THREE.BufferAttribute(field, 3))
+    const fieldTexture = starSpriteTexture()
     scene.add(new THREE.Points(fieldGeo, new THREE.PointsMaterial({
-      size: 1.4, color: 0x8fa3c8, transparent: true, opacity: 0.55, depthWrite: false
+      size: 2.4, map: fieldTexture, color: 0x8fa3c8, transparent: true, opacity: 0.8, depthWrite: false
     })))
 
     const bodies = []
-    const disposables = [star.geometry, fieldGeo]
+    const disposables = [star.geometry, starHitGeo, fieldGeo, fieldTexture]
     const ordered = [...system.planets].sort((a, b) => (a.smax ?? 99) - (b.smax ?? 99))
 
     ordered.forEach((planet, index) => {
@@ -131,13 +163,14 @@ export default function SystemView({ system, filter, selected, onSelectPlanet })
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObjects(bodies.map(b => b.hit))
-      return hits.length > 0 ? hits[0].object.userData.planet : null
+      const hits = raycaster.intersectObjects([...bodies.map(b => b.hit), starHit])
+      return hits.length > 0 ? hits[0].object.userData : null
     }
 
     function onClick(event) {
-      const planet = pick(event)
-      if (planet) selectRef.current(planet)
+      const target = pick(event)
+      if (target?.planet) selectRef.current(target.planet)
+      else if (target?.star) starRef.current?.()
     }
 
     function onMove(event) {

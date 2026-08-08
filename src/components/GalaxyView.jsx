@@ -4,19 +4,46 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { systemMatches } from '../lib/select.js'
 import { fmtDistance, fmtValue } from '../lib/format.js'
 
+const SPRITE_SIZE = 128
+const STAR_SIZE = 46
+const STAR_MIN_PX = 4
+const STAR_MAX_PX = 60
+const STAR_CORE_RATIO = 0.2
+const PICK_SLOP_PX = 7
+const DUST_EXTENT = 32000
+const WARP_STANDOFF = 60
+const SOL_MARKER_PX = 18
+
 function starSprite() {
   const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
+  canvas.width = SPRITE_SIZE
+  canvas.height = SPRITE_SIZE
   const ctx = canvas.getContext('2d')
-  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32)
-  g.addColorStop(0, 'rgba(255,255,255,1)')
-  g.addColorStop(0.25, 'rgba(255,255,255,0.65)')
-  g.addColorStop(0.55, 'rgba(255,255,255,0.18)')
-  g.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = g
-  ctx.fillRect(0, 0, 64, 64)
-  return new THREE.CanvasTexture(canvas)
+  const image = ctx.createImageData(SPRITE_SIZE, SPRITE_SIZE)
+  const data = image.data
+  const mid = (SPRITE_SIZE - 1) / 2
+  for (let y = 0; y < SPRITE_SIZE; y++) {
+    for (let x = 0; x < SPRITE_SIZE; x++) {
+      const dx = (x - mid) / mid
+      const dy = (y - mid) / mid
+      const d = Math.min(1, Math.sqrt(dx * dx + dy * dy))
+      const core = Math.exp(-d * d * 52)
+      const halo = 0.34 * Math.exp(-d * 7)
+      const a = Math.max(0, Math.min(1, (core + halo) * (1 - d * d)))
+      const i = (y * SPRITE_SIZE + x) * 4
+      data[i] = 255
+      data[i + 1] = 255
+      data[i + 2] = 255
+      data[i + 3] = Math.round(a * 255)
+    }
+  }
+  ctx.putImageData(image, 0, 0)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.generateMipmaps = false
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.LinearFilter
+  texture.needsUpdate = true
+  return texture
 }
 
 export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
@@ -30,8 +57,8 @@ export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
   useEffect(() => {
     const mount = mountRef.current
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(58, mount.clientWidth / mount.clientHeight, 0.5, 40000)
-    camera.position.set(0, 420, 900)
+    const camera = new THREE.PerspectiveCamera(58, mount.clientWidth / mount.clientHeight, 4, 80000)
+    camera.position.set(0, 400, 830)
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -41,10 +68,15 @@ export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
     const count = systems.length
     const positions = new Float32Array(count * 3)
     const colors = new Float32Array(count * 3)
+    const mapped = []
     const base = []
     const color = new THREE.Color()
+    let sceneRadius = 1
     for (let i = 0; i < count; i++) {
       const s = systems[i]
+      const at = new THREE.Vector3(s.x, s.y, s.z)
+      mapped.push(at)
+      sceneRadius = Math.max(sceneRadius, at.length())
       positions[i * 3] = s.x
       positions[i * 3 + 1] = s.y
       positions[i * 3 + 2] = s.z
@@ -59,40 +91,67 @@ export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
-    const points = new THREE.Points(geometry, new THREE.PointsMaterial({
-      size: 14,
-      map: starSprite(),
+    const sprite = starSprite()
+    const pixelRatio = renderer.getPixelRatio()
+    const starMaterial = new THREE.PointsMaterial({
+      size: STAR_SIZE,
+      map: sprite,
       vertexColors: true,
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       sizeAttenuation: true
-    }))
+    })
+    starMaterial.onBeforeCompile = shader => {
+      shader.uniforms.minPointSize = { value: STAR_MIN_PX * pixelRatio }
+      shader.uniforms.maxPointSize = { value: STAR_MAX_PX * pixelRatio }
+      shader.vertexShader = shader.vertexShader
+        .replace('uniform float scale;', 'uniform float scale;\nuniform float minPointSize;\nuniform float maxPointSize;')
+        .replace(
+          '#include <logdepthbuf_vertex>',
+          'gl_PointSize = clamp( gl_PointSize, minPointSize, maxPointSize );\n\t#include <logdepthbuf_vertex>'
+        )
+    }
+    const points = new THREE.Points(geometry, starMaterial)
     scene.add(points)
 
-    const sol = new THREE.Mesh(
-      new THREE.SphereGeometry(3, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 0xfff4ea })
-    )
-    scene.add(sol)
+    const solGeo = new THREE.BufferGeometry()
+    solGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3))
+    const solMaterial = new THREE.PointsMaterial({
+      size: SOL_MARKER_PX,
+      map: sprite,
+      color: 0xfff4ea,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: false
+    })
+    scene.add(new THREE.Points(solGeo, solMaterial))
 
     const dust = new Float32Array(2400 * 3)
-    for (let i = 0; i < dust.length; i++) dust[i] = (Math.random() - 0.5) * 9000
+    for (let i = 0; i < dust.length; i++) dust[i] = (Math.random() - 0.5) * DUST_EXTENT
     const dustGeo = new THREE.BufferGeometry()
     dustGeo.setAttribute('position', new THREE.BufferAttribute(dust, 3))
-    scene.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({
-      size: 3, color: 0x334155, transparent: true, opacity: 0.5, depthWrite: false
-    })))
+    const dustMaterial = new THREE.PointsMaterial({
+      size: 2,
+      map: sprite,
+      color: 0x334155,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      sizeAttenuation: false
+    })
+    scene.add(new THREE.Points(dustGeo, dustMaterial))
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.06
     controls.rotateSpeed = 0.5
-    controls.minDistance = 30
-    controls.maxDistance = 6000
+    controls.minDistance = 15
+    controls.maxDistance = 7500
 
     const raycaster = new THREE.Raycaster()
-    raycaster.params.Points.threshold = 12
+    raycaster.params.Points.threshold = 60
     const pointer = new THREE.Vector2()
     let hoverIndex = -1
     let warp = null
@@ -103,8 +162,22 @@ export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
+      const focal = rect.height / (2 * Math.tan((camera.fov * Math.PI) / 360))
+      const reach = camera.position.length() + sceneRadius
+      raycaster.params.Points.threshold = Math.max(8, (PICK_SLOP_PX * reach) / focal)
       const hits = raycaster.intersectObject(points)
-      return hits.length > 0 ? hits[0].index : -1
+      let best = -1
+      let bestScore = Infinity
+      for (const hit of hits) {
+        if (hit.distance <= 0) continue
+        const drawn = Math.min(STAR_MAX_PX, Math.max(STAR_MIN_PX, (STAR_SIZE * rect.height * 0.5) / hit.distance))
+        const score = (hit.distanceToRay * focal) / hit.distance - drawn * STAR_CORE_RATIO
+        if (score < bestScore) {
+          bestScore = score
+          best = hit.index
+        }
+      }
+      return bestScore <= PICK_SLOP_PX ? best : -1
     }
 
     function onMove(event) {
@@ -131,8 +204,11 @@ export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
     }
 
     function beginWarp(system) {
-      const target = new THREE.Vector3(system.x, system.y, system.z)
-      const offset = camera.position.clone().sub(target).normalize().multiplyScalar(46)
+      const index = systems.indexOf(system)
+      const target = index >= 0
+        ? mapped[index].clone()
+        : new THREE.Vector3(system.x, system.y, system.z)
+      const offset = camera.position.clone().sub(target).normalize().multiplyScalar(WARP_STANDOFF)
       warp = {
         t: 0,
         host: system.host,
@@ -192,6 +268,11 @@ export default function GalaxyView({ systems, filter, onWarp, warpTarget }) {
       renderer.dispose()
       geometry.dispose()
       dustGeo.dispose()
+      solGeo.dispose()
+      solMaterial.dispose()
+      starMaterial.dispose()
+      dustMaterial.dispose()
+      sprite.dispose()
       mount.removeChild(renderer.domElement)
       apiRef.current = null
     }
