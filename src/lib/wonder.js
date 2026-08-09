@@ -18,3 +18,11 @@ export function approachFlight(system, standoff = WONDER_STANDOFF) {
     speed: 0
   }
 }
+
+export function resumeFlight(visits, standoff = WONDER_STANDOFF) {
+  if (!Array.isArray(visits) || visits.length === 0) return null
+  const last = visits[visits.length - 1]
+  if (last == null) return null
+  const finite = [last.x, last.y, last.z].every(v => Number.isFinite(v))
+  return finite ? approachFlight(last, standoff) : null
+}

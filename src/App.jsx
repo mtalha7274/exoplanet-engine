@@ -14,7 +14,7 @@ import { systemStats } from './lib/format.js'
 import { filterPlanets, findSystem, pickRandom } from './lib/select.js'
 import { createJourney, recordVisit, loadJourney, saveJourney, clearJourney } from './lib/journey.js'
 import { SOL_SYSTEM } from './lib/homeSystem.js'
-import { approachFlight } from './lib/wonder.js'
+import { approachFlight, resumeFlight } from './lib/wonder.js'
 
 const IDLE_TELEMETRY = {
   speed: 0,
@@ -51,7 +51,10 @@ export default function App() {
 
   useEffect(() => {
     loadPlanets().then(setPlanets).catch(err => setError(err.message))
-    setJourney(loadJourney(storage()))
+    const saved = loadJourney(storage())
+    setJourney(saved)
+    const resumed = resumeFlight(saved.visits)
+    if (resumed) flightRef.current = resumed
   }, [])
 
   const systems = useMemo(() => (planets ? groupSystems(planets) : []), [planets])
