@@ -2,20 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { buildShip } from './ship.js'
 import {
+  pickFlightTarget,
+  solExaggeration,
+  SOL_DRAW_RADIUS as SOL_RADIUS,
+  SOL_KEEP_PC
+} from '../lib/homeSystem.js'
+import {
   createFlight,
   stepFlight,
   distanceFromEarth,
   nearestSystem,
-  pickStar,
+  stickEase,
   orientationEuler,
   bankTarget,
   throttleGlow,
-  homeExaggeration,
   ARRIVAL_PC,
   CAM_OFFSET,
   FLIGHT_FOV,
-  SOL_POSITION,
-  EARTH_POSITION
+  SOL_POSITION
 } from '../lib/flight.js'
 
 const NEAR_FIELD_PC = 6
@@ -25,19 +29,13 @@ const STAR_WORLD_SIZE = 0.09
 const STAR_MIN_PX = 3.4
 const STAR_MAX_PX = 64
 
-const SOL_RADIUS = 0.11
 const SOL_GLOW = 0.95
-const SOL_KEEP_PC = 10
-const EARTH_RADIUS = 0.085
-const EARTH_KEEP_PC = 25
-const EARTH_SPIN = 0.07
 const LABEL_ANGULAR = 0.055
-const NOTE_ANGULAR = 0.036
 const HOME_LABEL_PC = 60
 
 const KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'Space']
 
-const EXAGGERATION = (Math.round(homeExaggeration() / 1000) * 1000).toLocaleString('en-US')
+const EXAGGERATION = (Math.round(solExaggeration() / 100000) / 10).toFixed(1)
 
 const NOTE_STYLE = {
   position: 'absolute',
@@ -247,37 +245,8 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
     sunlight.position.set(...SOL_POSITION)
     home.add(sunlight)
 
-    const earth = new THREE.Mesh(
-      new THREE.SphereGeometry(EARTH_RADIUS, 32, 24),
-      new THREE.MeshStandardMaterial({
-        color: 0x2f74c8, roughness: 0.85, metalness: 0.05,
-        emissive: 0x0b2647, emissiveIntensity: 0.9
-      })
-    )
-    earth.position.set(...EARTH_POSITION)
-    home.add(earth)
-
-    const earthHalo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: sprite, color: 0x6fb6ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55
-    }))
-    earthHalo.position.set(...EARTH_POSITION)
-    home.add(earthHalo)
-
-    const gapGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(...SOL_POSITION),
-      new THREE.Vector3(...EARTH_POSITION)
-    ])
-    const gapMat = new THREE.LineDashedMaterial({
-      color: 0x5f7da6, dashSize: 0.035, gapSize: 0.035, transparent: true, opacity: 0.55, depthWrite: false
-    })
-    const gapLine = new THREE.Line(gapGeo, gapMat)
-    gapLine.computeLineDistances()
-    home.add(gapLine)
-
     const solLabel = labelSprite('SOL', '#ffe6bd')
-    const earthLabel = labelSprite('EARTH', '#a8d4ff')
-    const scaleLabel = labelSprite('NOT TO SCALE', '#7f9dc4')
-    home.add(solLabel, earthLabel, scaleLabel)
+    home.add(solLabel)
 
     const nearPool = []
     for (let i = 0; i < 10; i++) {
@@ -335,7 +304,7 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
         flight.pos[1] + camera.position.y,
         flight.pos[2] + camera.position.z
       ]
-      const hit = pickStar(systems, eye, [ray.x, ray.y, ray.z], 0.045)
+      const hit = pickFlightTarget(systems, eye, [ray.x, ray.y, ray.z])
       if (hit) selectRef.current(hit)
     }
 
@@ -352,6 +321,7 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
     }
     window.addEventListener('resize', onResize)
 
+    let stick = 0
     let flight = flightRef.current ?? createFlight()
     const clock = new THREE.Clock()
     let frame = 0
@@ -372,13 +342,14 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
       frame = requestAnimationFrame(animate)
       const dt = Math.min(0.05, clock.getDelta())
 
-      flight = stepFlight(flight, input, dt)
+      stick = stickEase(stick, input.turn, dt)
+      flight = stepFlight(flight, { ...input, turn: stick }, dt)
       flightRef.current = flight
 
       euler.set(...orientationEuler(flight.yaw, flight.pitch))
       quat.setFromEuler(euler)
 
-      roll += (bankTarget(input.turn) - roll) * Math.min(1, dt * 5)
+      roll += (bankTarget(stick) - roll) * Math.min(1, dt * 5)
       shipEuler.set(...orientationEuler(flight.yaw, flight.pitch, roll))
       shipQuat.setFromEuler(shipEuler)
       ship.quaternion.copy(shipQuat)
@@ -415,41 +386,15 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
       solCore.scale.setScalar(solLod)
       solGlow.scale.setScalar(SOL_GLOW * solLod)
 
-      const earthDist = Math.hypot(
-        EARTH_POSITION[0] - flight.pos[0],
-        EARTH_POSITION[1] - flight.pos[1],
-        EARTH_POSITION[2] - flight.pos[2]
-      )
-      const earthLod = Math.max(1, earthDist / EARTH_KEEP_PC)
-      earth.scale.setScalar(earthLod)
-      earth.rotation.y += dt * EARTH_SPIN
-      earthHalo.scale.setScalar(EARTH_RADIUS * 4 * earthLod)
-
       const labelled = solDist < HOME_LABEL_PC
       solLabel.visible = labelled
-      earthLabel.visible = labelled
-      scaleLabel.visible = labelled
-      gapLine.visible = labelled
       if (labelled) {
         const solLabelHeight = Math.min(0.9, solDist * LABEL_ANGULAR)
-        const earthLabelHeight = Math.min(0.9, earthDist * LABEL_ANGULAR)
         sizeLabel(solLabel, solLabelHeight)
-        sizeLabel(earthLabel, earthLabelHeight)
-        sizeLabel(scaleLabel, Math.min(0.7, solDist * NOTE_ANGULAR))
         solLabel.position.set(
           SOL_POSITION[0],
           SOL_POSITION[1] - SOL_RADIUS * solLod - solLabelHeight * 1.4,
           SOL_POSITION[2]
-        )
-        earthLabel.position.set(
-          EARTH_POSITION[0],
-          EARTH_POSITION[1] - EARTH_RADIUS * earthLod - earthLabelHeight * 1.4,
-          EARTH_POSITION[2]
-        )
-        scaleLabel.position.set(
-          (SOL_POSITION[0] + EARTH_POSITION[0]) / 2,
-          (SOL_POSITION[1] + EARTH_POSITION[1]) / 2 - scaleLabel.scale.y * 1.1,
-          (SOL_POSITION[2] + EARTH_POSITION[2]) / 2
         )
       }
 
@@ -481,18 +426,13 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
       renderer.domElement.removeEventListener('click', onClick)
       ship.userData.dispose()
       for (const s of nearPool) s.material.dispose()
-      for (const label of [solLabel, earthLabel, scaleLabel]) {
+      for (const label of [solLabel]) {
         label.material.dispose()
         label.userData.texture.dispose()
       }
       solCore.geometry.dispose()
       solCore.material.dispose()
       solGlow.material.dispose()
-      earth.geometry.dispose()
-      earth.material.dispose()
-      earthHalo.material.dispose()
-      gapGeo.dispose()
-      gapMat.dispose()
       sprite.dispose()
       point.dispose()
       starMat.dispose()
@@ -516,8 +456,8 @@ export default function FlightView({ systems, flightRef, onTelemetry, onSelectSt
       )}
       {nearHome && (
         <div style={NOTE_STYLE}>
-          <span style={NOTE_HEAD_STYLE}>HOME SYSTEM NOT TO SCALE</span>
-          <span>Sol and Earth drawn far apart and far too large to be seen at all — the gap is exaggerated about {EXAGGERATION}×. Every star beyond is true scale.</span>
+          <span style={NOTE_HEAD_STYLE}>SOL NOT TO SCALE</span>
+          <span>Sol is drawn about {EXAGGERATION} million times its true width so you can find it. Its planets and every star beyond are at true distance.</span>
         </div>
       )}
       <div className="reticle" />

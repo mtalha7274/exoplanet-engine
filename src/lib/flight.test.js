@@ -5,6 +5,8 @@ import {
   forwardVector,
   orientationEuler,
   bankTarget,
+  stickEase,
+  turnAuthority,
   throttleGlow,
   distanceFromEarth,
   nearestSystem,
@@ -13,17 +15,18 @@ import {
   pickStar,
   eyePosition,
   inView,
-  homeExaggeration,
   MIN_SPEED,
   BASE_SPEED,
   MAX_SPEED,
   LY_PER_PC,
-  AU_PER_PC,
   PITCH_LIMIT,
+  YAW_RATE,
+  PITCH_RATE,
+  STICK_ENGAGE,
+  TURN_AUTHORITY_FLOOR,
+  TURN_AUTHORITY_SPEED,
   HOME_START,
   SOL_POSITION,
-  EARTH_POSITION,
-  EARTH_ORBIT_PC,
   ARRIVAL_PC
 } from './flight.js'
 
@@ -92,33 +95,18 @@ describe('createFlight', () => {
 })
 
 describe('home system framing', () => {
-  it('has Sol and Earth both in frame on the very first frame', () => {
-    const f = createFlight()
-    expect(inView(SOL_POSITION, f, 70, 16 / 9)).toBe(true)
-    expect(inView(EARTH_POSITION, f, 70, 16 / 9)).toBe(true)
+  it('has Sol in frame on the very first frame', () => {
+    expect(inView(SOL_POSITION, createFlight(), 70, 16 / 9)).toBe(true)
   })
 
-  it('keeps both in frame even in a narrow window', () => {
-    const f = createFlight()
-    expect(inView(SOL_POSITION, f, 70, 1)).toBe(true)
-    expect(inView(EARTH_POSITION, f, 70, 1)).toBe(true)
+  it('keeps Sol in frame even in a narrow window', () => {
+    expect(inView(SOL_POSITION, createFlight(), 70, 1)).toBe(true)
   })
 
-  it('holds both clear of the ship silhouette dead ahead', () => {
-    const f = createFlight()
-    expect(offAxisDegrees(SOL_POSITION, f)).toBeGreaterThan(6)
-    expect(offAxisDegrees(EARTH_POSITION, f)).toBeGreaterThan(6)
+  it('holds Sol clear of the ship silhouette dead ahead', () => {
+    expect(offAxisDegrees(SOL_POSITION, createFlight())).toBeGreaterThan(6)
   })
 
-  it('separates Sol and Earth enough to read as two bodies', () => {
-    const f = createFlight()
-    const eye = eyePosition(f)
-    const a = sub(SOL_POSITION, eye)
-    const b = sub(EARTH_POSITION, eye)
-    const deg = (Math.acos(dot(a, b) / (norm(a) * norm(b))) * 180) / Math.PI
-    expect(deg).toBeGreaterThan(6)
-    expect(deg).toBeLessThan(40)
-  })
 
   it('does not park the ship inside a catalogue arrival radius', () => {
     expect(norm(sub(HOME_START, SOL_POSITION))).toBeGreaterThan(ARRIVAL_PC)
@@ -133,11 +121,6 @@ describe('home system framing', () => {
     expect(miss).toBeGreaterThan(0.5)
   })
 
-  it('reports the drawn home system as wildly exaggerated', () => {
-    expect(EARTH_ORBIT_PC).toBeCloseTo(1 / AU_PER_PC, 12)
-    expect(EARTH_ORBIT_PC).toBeLessThan(0.00001)
-    expect(homeExaggeration()).toBeGreaterThan(10000)
-  })
 
   it('keeps Sol itself at the true heliocentric origin', () => {
     expect(SOL_POSITION).toEqual([0, 0, 0])
@@ -324,13 +307,13 @@ describe('cruise throttle', () => {
 
   it('base cruise is manoeuvrable near a star but not stuck', () => {
     const secondsToCross = ARRIVAL_PC / (BASE_SPEED / LY_PER_PC)
-    expect(secondsToCross).toBeGreaterThan(1.5)
-    expect(secondsToCross).toBeLessThan(10)
+    expect(secondsToCross).toBeGreaterThan(8)
+    expect(secondsToCross).toBeLessThan(20)
   })
 
-  it('sustained boost spans the true-scale catalog', () => {
+  it('sustained boost still reaches the nearest real stars within a play session', () => {
     const proxima = 1.301
-    const catalogEdge = 8500
+    const worthwhileRange = 50
     let f = createFlight()
     const start = [...f.pos]
     let toProxima = null
@@ -340,7 +323,46 @@ describe('cruise throttle', () => {
       if (toProxima === null && gone >= proxima) toProxima = (i + 1) / 60
     }
     expect(toProxima).toBeLessThan(5)
-    expect(norm(sub(f.pos, start))).toBeGreaterThan(catalogEdge)
+    expect(norm(sub(f.pos, start))).toBeGreaterThan(worthwhileRange)
+  })
+})
+
+describe('comfortable controls', () => {
+  it('keeps cruise and boost well clear of the old billion-c territory', () => {
+    expect(speedInC(BASE_SPEED)).toBeLessThan(10_000_000)
+    expect(speedInC(MAX_SPEED)).toBeLessThan(500_000_000)
+  })
+
+  it('caps boost to a meaningful but not extreme multiple of cruise', () => {
+    expect(MAX_SPEED / BASE_SPEED).toBeGreaterThan(5)
+    expect(MAX_SPEED / BASE_SPEED).toBeLessThanOrEqual(60)
+  })
+
+  it('completes a full turn-in-place in a comfortable number of seconds', () => {
+    const seconds = (2 * Math.PI) / YAW_RATE
+    expect(seconds).toBeGreaterThan(6)
+    expect(seconds).toBeLessThan(25)
+  })
+
+  it('keeps per-frame displacement small at a typical frame time, even under full boost', () => {
+    const f = hold(boosting, 30)
+    const before = [...f.pos]
+    const after = stepFlight(f, boosting, 1 / 60)
+    expect(norm(sub(after.pos, before))).toBeLessThan(0.05)
+  })
+
+  it('a short tap of the turn key nudges heading rather than snapping it', () => {
+    const before = createFlight()
+    const tapped = stepFlight(before, { ...cruise, turn: 1 }, 1 / 10)
+    const degrees = Math.abs(tapped.yaw - before.yaw) * (180 / Math.PI)
+    expect(degrees).toBeGreaterThan(0)
+    expect(degrees).toBeLessThan(15)
+  })
+
+  it('brakes smoothly rather than snapping instantly to zero', () => {
+    const flying = hold(cruise, 2)
+    const oneFrame = stepFlight(flying, halted, 1 / 60)
+    expect(oneFrame.speed).toBeGreaterThan(flying.speed * 0.8)
   })
 })
 
@@ -471,7 +493,7 @@ describe('movement', () => {
 
   it('converts light years per second into parsecs of travel', () => {
     const dt = 0.5
-    const from = { pos: [0, 0, 0], yaw: 0, pitch: 0, speed: 40 }
+    const from = { pos: [0, 0, 0], yaw: 0, pitch: 0, speed: 3 }
     const moved = stepFlight(from, boosting, dt)
     expect(moved.pos[2] * LY_PER_PC).toBeCloseTo(moved.speed * dt, 10)
   })
@@ -597,10 +619,76 @@ describe('speed readouts', () => {
 
   it('reads out base cruise and full boost', () => {
     expect(fmtSpeed(BASE_SPEED)).toContain('ly/s')
-    expect(fmtSpeed(MAX_SPEED)).toContain('500')
+    expect(parseFloat(fmtSpeed(MAX_SPEED))).toBeCloseTo(MAX_SPEED, 1)
   })
 
   it('treats a speed below the cutoff as stopped', () => {
     expect(fmtSpeed(MIN_SPEED / 2)).toBe('STATIONARY')
+  })
+})
+
+describe('turn authority falls away with speed', () => {
+  it('gives a stopped ship its full turn rate', () => {
+    expect(turnAuthority(0)).toBeCloseTo(1, 10)
+  })
+
+  it('never drops below the floor, however fast the ship is going', () => {
+    for (const speed of [TURN_AUTHORITY_SPEED, 5, MAX_SPEED, MAX_SPEED * 10]) {
+      expect(turnAuthority(speed)).toBeCloseTo(TURN_AUTHORITY_FLOOR, 10)
+    }
+  })
+
+  it('tapers rather than stepping between the two', () => {
+    const half = turnAuthority(TURN_AUTHORITY_SPEED / 2)
+    expect(half).toBeLessThan(1)
+    expect(half).toBeGreaterThan(TURN_AUTHORITY_FLOOR)
+  })
+
+  it('leaves the ship nimble at base cruise near a star', () => {
+    expect(turnAuthority(BASE_SPEED)).toBeGreaterThan(0.9)
+  })
+
+  it('steers a boosted ship more sluggishly than a cruising one', () => {
+    const cruiseTurn = stepFlight(hold(cruise, 2), { ...cruise, turn: 1 }, 1 / 60)
+    const boostTurn = stepFlight(hold(boosting, 20), { ...boosting, turn: 1 }, 1 / 60)
+    const cruiseYaw = Math.abs(cruiseTurn.yaw - hold(cruise, 2).yaw)
+    const boostYaw = Math.abs(boostTurn.yaw - hold(boosting, 20).yaw)
+    expect(boostYaw).toBeLessThan(cruiseYaw)
+  })
+})
+
+describe('stick easing softens the controls', () => {
+  it('leaves a settled stick where it is', () => {
+    expect(stickEase(1, 1, 1 / 60)).toBeCloseTo(1, 10)
+    expect(stickEase(0, 0, 1 / 60)).toBeCloseTo(0, 10)
+  })
+
+  it('never snaps to full deflection in a single frame', () => {
+    expect(stickEase(0, 1, 1 / 60)).toBeLessThan(0.2)
+    expect(stickEase(0, 1, 1 / 60)).toBeGreaterThan(0)
+  })
+
+  it('eases back toward centre when the key is released', () => {
+    const engaged = stickEase(0, 1, 0.3)
+    expect(stickEase(engaged, 0, 1 / 60)).toBeLessThan(engaged)
+  })
+
+  it('closes most of the gap within a comfortable fraction of a second', () => {
+    let stick = 0
+    for (let i = 0; i < 30; i++) stick = stickEase(stick, 1, 1 / 60)
+    expect(stick).toBeGreaterThan(0.8)
+  })
+
+  it('is symmetric for a left deflection', () => {
+    expect(stickEase(0, -1, 1 / 60)).toBeCloseTo(-stickEase(0, 1, 1 / 60), 12)
+  })
+
+  it('uses the shared engage rate by default', () => {
+    expect(stickEase(0, 1, 1 / 60)).toBeCloseTo(stickEase(0, 1, 1 / 60, STICK_ENGAGE), 12)
+  })
+
+  it('keeps the nose calmer than the turn so climbing stays gentle', () => {
+    expect(PITCH_RATE).toBeLessThanOrEqual(YAW_RATE)
+    expect(PITCH_RATE).toBeGreaterThan(0.2)
   })
 })

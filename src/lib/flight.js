@@ -1,14 +1,17 @@
 export const LY_PER_PC = 3.26156
 export const AU_PER_PC = 206264.806
 export const MIN_SPEED = 0.002
-export const BASE_SPEED = 0.5
-export const MAX_SPEED = 500
+export const BASE_SPEED = 0.15
+export const MAX_SPEED = 8
 export const SPOOL_RATE = 6
 export const BOOST_ACCEL = 1.5
 export const BOOST_DECAY = 2.2
-export const BRAKE_RATE = 16
-export const YAW_RATE = 1.1
-export const PITCH_RATE = 1.4
+export const BRAKE_RATE = 8
+export const YAW_RATE = 0.6
+export const STICK_ENGAGE = 5
+export const TURN_AUTHORITY_FLOOR = 0.4
+export const TURN_AUTHORITY_SPEED = 2
+export const PITCH_RATE = 0.5
 export const BANK_ANGLE = 0.4
 export const PITCH_LIMIT = Math.PI / 2 - 0.05
 export const ARRIVAL_PC = 0.6
@@ -17,9 +20,7 @@ export const FLIGHT_FOV = 70
 export const CAM_OFFSET = [0, 0.28, -1.65]
 
 export const SOL_POSITION = [0, 0, 0]
-export const EARTH_POSITION = [0.62, 0.3, 0.3]
 export const HOME_START = [0.85, -0.55, -1.7]
-export const EARTH_ORBIT_PC = 1 / AU_PER_PC
 
 export function createFlight() {
   return { pos: [...HOME_START], yaw: 0, pitch: 0, speed: 0 }
@@ -32,6 +33,15 @@ export function forwardVector(yaw, pitch) {
 
 export function orientationEuler(yaw, pitch, roll = 0) {
   return [-pitch, -yaw, roll]
+}
+
+export function stickEase(current, target, dt, rate = STICK_ENGAGE) {
+  return target + (current - target) * Math.exp(-rate * dt)
+}
+
+export function turnAuthority(speed) {
+  const t = Math.min(1, Math.max(0, speed) / TURN_AUTHORITY_SPEED)
+  return TURN_AUTHORITY_FLOOR + (1 - TURN_AUTHORITY_FLOOR) * (1 - t)
 }
 
 export function bankTarget(turn) {
@@ -75,13 +85,6 @@ export function inView(target, state, fov = FLIGHT_FOV, aspect = 16 / 9) {
   if (o.forward <= 0) return false
   const half = Math.tan((fov * Math.PI) / 360) * o.forward
   return Math.abs(o.y) <= half && Math.abs(o.x) <= half * aspect
-}
-
-export function homeExaggeration() {
-  const dx = EARTH_POSITION[0] - SOL_POSITION[0]
-  const dy = EARTH_POSITION[1] - SOL_POSITION[1]
-  const dz = EARTH_POSITION[2] - SOL_POSITION[2]
-  return Math.sqrt(dx * dx + dy * dy + dz * dz) / EARTH_ORBIT_PC
 }
 
 export function throttleGlow(speed) {
@@ -159,7 +162,7 @@ function nextSpeed(speed, input, dt) {
 }
 
 export function stepFlight(state, input, dt) {
-  const yaw = state.yaw + (input.turn ?? 0) * YAW_RATE * dt
+  const yaw = state.yaw + (input.turn ?? 0) * YAW_RATE * turnAuthority(state.speed) * dt
   const pitch = Math.max(
     -PITCH_LIMIT,
     Math.min(PITCH_LIMIT, state.pitch + (input.pitch ?? 0) * PITCH_RATE * dt)

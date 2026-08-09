@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import GalaxyView from './components/GalaxyView.jsx'
 import SystemView from './components/SystemView.jsx'
 import FlightView from './components/FlightView.jsx'
 import FlightHUD from './components/FlightHUD.jsx'
 import PlanetPanel from './components/PlanetPanel.jsx'
 import StarPanel from './components/StarPanel.jsx'
 import FilterChips from './components/FilterChips.jsx'
+import Minimap from './components/Minimap.jsx'
 import { loadPlanets } from './lib/data.js'
 import { groupSystems } from './lib/pipeline.js'
 import { createSurveyClient } from './lib/surveyClient.js'
 import { FILTERS } from './lib/filters.js'
 import { systemStats } from './lib/format.js'
 import { filterPlanets, findSystem, pickRandom } from './lib/select.js'
+import { createJourney, recordVisit, loadJourney, saveJourney, clearJourney } from './lib/journey.js'
+import { SOL_SYSTEM } from './lib/homeSystem.js'
+import { approachFlight } from './lib/wonder.js'
 
 const IDLE_TELEMETRY = {
   speed: 0,
@@ -38,17 +41,17 @@ export default function App() {
   const [filter, setFilter] = useState(null)
   const [host, setHost] = useState(null)
   const [planet, setPlanet] = useState(null)
-  const [warpTarget, setWarpTarget] = useState(null)
-  const [mode, setMode] = useState('galaxy')
+  const [flightKey, setFlightKey] = useState(0)
   const [telemetry, setTelemetry] = useState(IDLE_TELEMETRY)
   const [starRecord, setStarRecord] = useState(null)
-  const pendingPlanet = useRef(null)
+  const [journey, setJourney] = useState(createJourney)
   const flightRef = useRef(null)
 
   const survey = useMemo(() => createSurveyClient({ storage: storage() }), [])
 
   useEffect(() => {
     loadPlanets().then(setPlanets).catch(err => setError(err.message))
+    setJourney(loadJourney(storage()))
   }, [])
 
   const systems = useMemo(() => (planets ? groupSystems(planets) : []), [planets])
@@ -59,17 +62,20 @@ export default function App() {
     return out
   }, [planets])
 
-  const system = findSystem(systems, host)
-  const flying = mode === 'flight' && !system
+  const system = host === SOL_SYSTEM.host ? SOL_SYSTEM : findSystem(systems, host)
 
-  function warpTo(nextHost) {
-    setHost(nextHost)
-    setWarpTarget(null)
-    const queued = pendingPlanet.current
-    if (queued) {
-      pendingPlanet.current = null
-      setPlanet(queued)
-    }
+  useEffect(() => {
+    if (!system) return
+    setJourney(previous => {
+      const next = recordVisit(previous, system)
+      if (next !== previous) saveJourney(storage(), next)
+      return next
+    })
+  }, [system])
+
+  function resetJourney() {
+    clearJourney(storage())
+    setJourney(createJourney())
   }
 
   function randomWonder() {
@@ -79,25 +85,17 @@ export default function App() {
     if (!pick) return
     const target = findSystem(systems, pick.host)
     if (!target) return
+    flightRef.current = approachFlight(target)
+    setFlightKey(key => key + 1)
+    setTelemetry(IDLE_TELEMETRY)
+    setStarRecord(null)
     setPlanet(null)
-    setMode('galaxy')
-    if (host === pick.host) {
-      setPlanet(pick)
-      return
-    }
-    pendingPlanet.current = pick
-    if (host) {
-      setHost(null)
-      setWarpTarget(target)
-    } else {
-      setWarpTarget(target)
-    }
+    setHost(null)
   }
 
   function leaveSystem() {
     setHost(null)
     setPlanet(null)
-    setWarpTarget(null)
     setStarRecord(null)
   }
 
@@ -111,17 +109,10 @@ export default function App() {
     setStarRecord(next)
   }
 
-  function launch() {
-    setHost(null)
+  function selectFlightTarget(hit) {
+    if (!hit) return
     setPlanet(null)
-    setWarpTarget(null)
-    setStarRecord(null)
-    setMode('flight')
-  }
-
-  function toGalaxyMap() {
-    setStarRecord(null)
-    setMode('galaxy')
+    setStarRecord(hit.system)
   }
 
   if (error) {
@@ -155,19 +146,13 @@ export default function App() {
           onSelectPlanet={selectPlanet}
           onSelectStar={() => selectStar(system)}
         />
-      ) : flying ? (
+      ) : (
         <FlightView
+          key={flightKey}
           systems={systems}
           flightRef={flightRef}
           onTelemetry={setTelemetry}
-          onSelectStar={setStarRecord}
-        />
-      ) : (
-        <GalaxyView
-          systems={systems}
-          filter={filter}
-          onWarp={warpTo}
-          warpTarget={warpTarget}
+          onSelectStar={selectFlightTarget}
         />
       )}
 
@@ -183,26 +168,17 @@ export default function App() {
       </header>
 
       {!system && (
-        <div className="mode-switch">
-          <button
-            className={flying ? '' : 'active'}
-            onClick={toGalaxyMap}
-          >
-            GALAXY MAP
-          </button>
-          <button
-            className={flying ? 'active' : ''}
-            onClick={launch}
-          >
-            FLY FROM EARTH
-          </button>
-        </div>
+        <Minimap
+          visits={journey.visits}
+          shipPos={telemetry.flight ? telemetry.flight.pos : null}
+          onReset={resetJourney}
+        />
       )}
 
-      {flying && (
+      {!system && (
         <FlightHUD
           telemetry={telemetry}
-          onInspect={setStarRecord}
+          onInspect={selectStar}
           onEnterSystem={s => setHost(s.host)}
         />
       )}
@@ -211,7 +187,7 @@ export default function App() {
         <div className="hud-system">
           <div className="hud-system-head">
             <button className="back" onClick={leaveSystem}>
-              {mode === 'flight' ? '← RESUME FLIGHT' : '← GALAXY'}
+              ← RESUME FLIGHT
             </button>
             <h2>{system.host}</h2>
           </div>
@@ -248,16 +224,14 @@ export default function App() {
         <PlanetPanel planet={planet} survey={survey} onClose={() => setPlanet(null)} />
       )}
 
-      {!flying && (
-        <footer className={planet || starRecord ? 'hud-bottom shifted' : 'hud-bottom'}>
-          <FilterChips
-            active={filter}
-            counts={counts}
-            onChange={setFilter}
-            onRandom={randomWonder}
-          />
-        </footer>
-      )}
+      <footer className={planet || starRecord ? 'hud-bottom shifted' : 'hud-bottom'}>
+        <FilterChips
+          active={filter}
+          counts={counts}
+          onChange={setFilter}
+          onRandom={randomWonder}
+        />
+      </footer>
     </div>
   )
 }

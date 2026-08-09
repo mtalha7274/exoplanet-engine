@@ -165,16 +165,6 @@ body {
   white-space: nowrap;
 }
 
-.swatch {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  margin-right: 0.45rem;
-  border-radius: 50%;
-  vertical-align: baseline;
-  box-shadow: 0 0 6px currentColor;
-}
-
 .back {
   background: rgba(11, 16, 32, 0.8);
   border: 1px solid var(--line);
@@ -189,30 +179,13 @@ body {
 
 .back:hover { background: rgba(125, 211, 252, 0.14); border-color: var(--accent); }
 
-.tooltip {
-  position: fixed;
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  padding: 0.5rem 0.7rem;
-  background: rgba(5, 7, 13, 0.92);
-  border: 1px solid var(--line);
-  font-size: 0.62rem;
-  letter-spacing: 0.12em;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.tooltip strong { font-weight: 400; color: var(--accent); letter-spacing: 0.16em; }
-.tooltip span { color: var(--muted); }
-
 .hud-bottom {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   z-index: 6;
+  pointer-events: none;
   padding: 1.1rem 1.4rem 1.3rem;
   background: linear-gradient(to top, rgba(5, 7, 13, 0.9), transparent);
 }
@@ -226,6 +199,7 @@ body {
 
 .chip {
   display: inline-flex;
+  pointer-events: auto;
   align-items: center;
   gap: 0.45rem;
   padding: 0.5rem 0.8rem;
@@ -246,32 +220,6 @@ body {
 .chip.random { color: var(--accent); border-color: rgba(125, 211, 252, 0.45); }
 .chip-emoji { font-size: 0.85rem; }
 .chip-count { color: rgba(219, 230, 245, 0.45); }
-
-.mode-switch {
-  position: absolute;
-  top: 5.2rem;
-  right: 1.6rem;
-  z-index: 6;
-  display: flex;
-  gap: 1px;
-  background: var(--line);
-  border: 1px solid var(--line);
-}
-
-.mode-switch button {
-  background: rgba(11, 16, 32, 0.86);
-  border: none;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.58rem;
-  letter-spacing: 0.2em;
-  padding: 0.55rem 0.85rem;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-
-.mode-switch button:hover { color: var(--text); }
-.mode-switch button.active { background: var(--accent); color: var(--void); }
 
 .viewport.flight { cursor: crosshair; }
 
@@ -321,7 +269,7 @@ body {
 .flight-hud {
   position: absolute;
   left: 1.6rem;
-  bottom: 1.4rem;
+  bottom: 5rem;
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -590,3 +538,48 @@ body {
   .hud-bottom.shifted { display: none; }
   .chips { justify-content: flex-start; overflow-x: auto; flex-wrap: nowrap; }
 }
+
+.minimap {
+  position: absolute;
+  top: 5.2rem;
+  right: 1.6rem;
+  z-index: 7;
+  background: rgba(11, 16, 32, 0.86);
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.55rem 0.45rem;
+}
+
+.minimap-head,
+.minimap-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
+.minimap-head { margin-bottom: 0.35rem; }
+.minimap-foot { margin-top: 0.35rem; }
+
+.minimap-head button {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.45rem;
+  letter-spacing: 0.2em;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+
+.minimap-head button:hover { color: var(--accent); border-color: var(--accent); }
+
+.minimap-canvas { display: block; }
+
+.mini-ring { fill: none; stroke: rgba(125, 211, 252, 0.14); stroke-dasharray: 2 4; }
+.mini-path { fill: none; stroke: var(--accent); stroke-width: 1; opacity: 0.75; }
+.mini-sol { fill: #fff4ea; }
+.mini-visit { fill: var(--accent); }
+.mini-planet { fill: rgba(219, 230, 245, 0.55); }
+.mini-ship { fill: #fff; stroke: var(--accent); stroke-width: 1; }

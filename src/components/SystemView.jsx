@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { orbitRadius, orbitSpeed, displayRadius, starDisplayRadius } from '../lib/orbits.js'
+import { orbitRadius, orbitSpeed, orbitPosition, displayRadius, starDisplayRadius } from '../lib/orbits.js'
 import { planetTextureCanvas } from '../lib/texture.js'
 import { matchesFilter } from '../lib/filters.js'
 import { hashString } from '../lib/seed.js'
@@ -193,10 +193,9 @@ export default function SystemView({ system, filter, selected, onSelectPlanet, o
       frame = requestAnimationFrame(animate)
       const dt = Math.min(0.05, clock.getDelta())
       for (const b of bodies) {
-        b.angle += b.speed * dt * 0.35
-        const x = Math.cos(b.angle) * b.radius
-        const z = Math.sin(b.angle) * b.radius
-        b.mesh.position.set(x, Math.sin(b.tilt) * z, z)
+        b.angle += b.speed * dt
+        const p = orbitPosition(b.angle, b.radius, b.tilt)
+        b.mesh.position.set(p.x, p.y, p.z)
         b.mesh.rotation.y += dt * 0.25
       }
       controls.update()
